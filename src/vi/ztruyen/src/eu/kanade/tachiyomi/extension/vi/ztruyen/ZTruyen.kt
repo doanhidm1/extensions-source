@@ -272,7 +272,7 @@ class ZTruyen : HttpSource(), ConfigurableSource {
     private open class GenresFilter(title: String, pairs: List<Pair<String, String>>) :
         Filter.Select<Genre>(
             title,
-            listOf(Genre("Tất cả", "")) + pairs.map { Genre(it.second, it.first) },
+            (listOf(Genre("Tất cả", "")) + pairs.map { Genre(it.second, it.first) }).toTypedArray(),
         )
 
     private class Genre(val name: String, val slug: String) {
