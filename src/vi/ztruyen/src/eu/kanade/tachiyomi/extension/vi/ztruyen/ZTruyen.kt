@@ -63,17 +63,73 @@ class ZTruyen : HttpSource(), ConfigurableSource {
         GET("$apiUrl/danh-sach/truyen-moi?page=$page", headers)
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val res = response.parseAs<DataDto<ListingData>>()
-        val pagination = res.data.params.pagination
-        val totalPages = (pagination.totalItems + pagination.totalItemsPerPage - 1) / pagination.totalItemsPerPage
+        val currentPageData = response.parseAs<DataDto<ListingData>>().data
+        val pagination = currentPageData.params.pagination
+        val requestedPage = pagination.currentPage
+        val batchSize = pagination.totalItemsPerPage
+        val totalPages = (pagination.totalItems + batchSize - 1) / batchSize
+
         val hideMangaWithoutChapters = preferences.getBoolean(PREF_HIDE_MANGA_WITHOUT_CHAPTERS, true)
-        val manga = res.data.items
-            .asSequence()
-            .filter { !hideMangaWithoutChapters || it.hasChapters() }
-            .map { it.toSManga(imgUrl) }
-            .toList()
-        val hasNextPage = pagination.currentPage < totalPages
-        return MangasPage(manga, hasNextPage)
+        if (!hideMangaWithoutChapters) {
+            val manga = currentPageData.items.map { it.toSManga(imgUrl) }
+            return MangasPage(manga, requestedPage < totalPages)
+        }
+
+        val baseRequestUrl = response.request.url.newBuilder()
+            .setQueryParameter("page", "1")
+            .build()
+        val routeKey = baseRequestUrl.toString()
+
+        val cache = listingCache.getOrPut(routeKey) {
+            ListingCacheState(totalPages = totalPages, batchSize = batchSize)
+        }.apply {
+            this.totalPages = totalPages
+            this.batchSize = batchSize
+        }
+
+        cache.apiPages[requestedPage] = currentPageData
+
+        val startIndex = (requestedPage - 1) * cache.batchSize
+        val endExclusive = requestedPage * cache.batchSize
+
+        while (cache.validItems.size < endExclusive && cache.lastScannedApiPage < cache.totalPages) {
+            val nextApiPage = cache.lastScannedApiPage + 1
+            val listing = cache.apiPages[nextApiPage] ?: fetchListingPage(baseRequestUrl, nextApiPage)?.also {
+                cache.apiPages[nextApiPage] = it
+            } ?: break
+
+            cache.validItems += listing.items.filter { it.hasChapters() }
+            cache.lastScannedApiPage = nextApiPage
+        }
+
+        val pageItems = cache.validItems.drop(startIndex).take(cache.batchSize)
+        val hasNextPage = cache.validItems.size > endExclusive || cache.lastScannedApiPage < cache.totalPages
+
+        return MangasPage(pageItems.map { it.toSManga(imgUrl) }, hasNextPage)
+    }
+
+    private data class ListingCacheState(
+        var totalPages: Int,
+        var batchSize: Int,
+        val validItems: MutableList<EntriesData> = mutableListOf(),
+        val apiPages: MutableMap<Int, ListingData> = mutableMapOf(),
+        var lastScannedApiPage: Int = 0,
+    )
+
+    private val listingCache = mutableMapOf<String, ListingCacheState>()
+
+    private fun fetchListingPage(baseRequestUrl: okhttp3.HttpUrl, page: Int): ListingData? {
+        return try {
+            val url = baseRequestUrl.newBuilder()
+                .setQueryParameter("page", page.toString())
+                .build()
+            client.newCall(GET(url, headers)).execute().use {
+                if (!it.isSuccessful) return null
+                it.parseAs<DataDto<ListingData>>().data
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // ============================== Popular ==============================
@@ -130,23 +186,31 @@ class ZTruyen : HttpSource(), ConfigurableSource {
     // ============================== Search ==============================
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        val selectedGenre = filters.filterIsInstance<GenreList>()
+            .firstOrNull()
+            ?.let { it.values.getOrNull(it.state)?.slug.orEmpty() }
+            .orEmpty()
+
+        val selectedStatus = filters.filterIsInstance<StatusList>()
+            .firstOrNull()
+            ?.let { it.values.getOrNull(it.state)?.slug.orEmpty() }
+            .orEmpty()
+
         val (segments, params) = when {
             query.isNotBlank() -> {
                 listOf("tim-kiem") to mapOf("keyword" to query)
             }
 
-            filters.filterIsInstance<GenreList>().isNotEmpty() -> {
-                val genre = filters.filterIsInstance<GenreList>().first()
-                listOf("the-loai", genre.values[genre.state].slug) to emptyMap()
+            selectedGenre.isNotBlank() -> {
+                listOf("the-loai", selectedGenre) to emptyMap()
             }
 
-            filters.filterIsInstance<GenreList>().isEmpty() -> {
-                val status = filters.filterIsInstance<StatusList>().first()
-                listOf("danh-sach", status.values[status.state].slug) to emptyMap()
+            selectedStatus.isNotBlank() -> {
+                listOf("danh-sach", selectedStatus) to emptyMap()
             }
 
             else -> {
-                listOf("danh-sach", "dang-phat-hanh") to emptyMap()
+                listOf("danh-sach", "truyen-moi") to emptyMap()
             }
         }
 
@@ -197,6 +261,7 @@ class ZTruyen : HttpSource(), ConfigurableSource {
         Filter.Select<Genre>(
             "Trạng thái",
             arrayOf(
+                Genre("Tất cả", ""),
                 Genre("Mới nhất", "truyen-moi"),
                 Genre("Đang phát hành", "dang-phat-hanh"),
                 Genre("Hoàn thành", "hoan-thanh"),
@@ -207,7 +272,7 @@ class ZTruyen : HttpSource(), ConfigurableSource {
     private open class GenresFilter(title: String, pairs: List<Pair<String, String>>) :
         Filter.Select<Genre>(
             title,
-            pairs.map { Genre(it.second, it.first) }.toTypedArray(),
+            listOf(Genre("Tất cả", "")) + pairs.map { Genre(it.second, it.first) },
         )
 
     private class Genre(val name: String, val slug: String) {
