@@ -1,0 +1,62 @@
+name: Build Custom Extensions
+
+on:
+  workflow_dispatch:
+    inputs:
+      extension:
+        description: 'Extension to build (ztruyen, truyendex, or all)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ztruyen
+          - truyendex
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build Extensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build ZTruyen
+        if: ${{ inputs.extension == 'ztruyen' || inputs.extension == 'all' }}
+        run: |
+          ./gradlew :src:vi:ztruyen:spotlessApply :src:vi:ztruyen:assembleDebug
+
+      - name: Build TruyenDex
+        if: ${{ inputs.extension == 'truyendex' || inputs.extension == 'all' }}
+        run: |
+          ./gradlew :src:all:truyendex:spotlessApply :src:all:truyendex:assembleDebug
+
+      - name: Upload ZTruyen APK
+        if: ${{ inputs.extension == 'ztruyen' || inputs.extension == 'all' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ztruyen-apk
+          path: src/vi/ztruyen/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      - name: Upload TruyenDex APK
+        if: ${{ inputs.extension == 'truyendex' || inputs.extension == 'all' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: truyendex-apk
+          path: src/all/truyendex/build/outputs/apk/debug/*.apk
+          retention-days: 7

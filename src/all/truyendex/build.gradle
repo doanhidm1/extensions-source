@@ -1,0 +1,8 @@
+ext {
+    extName = 'TruyenDex'
+    extClass = '.TruyenDexFactory'
+    extVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"
