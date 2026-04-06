@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.SharedPreferences
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
@@ -65,7 +66,12 @@ class ZTruyen : HttpSource(), ConfigurableSource {
         val res = response.parseAs<DataDto<ListingData>>()
         val pagination = res.data.params.pagination
         val totalPages = (pagination.totalItems + pagination.totalItemsPerPage - 1) / pagination.totalItemsPerPage
-        val manga = res.data.items.map { it.toSManga(imgUrl) }
+        val hideMangaWithoutChapters = preferences.getBoolean(PREF_HIDE_MANGA_WITHOUT_CHAPTERS, true)
+        val manga = res.data.items
+            .asSequence()
+            .filter { !hideMangaWithoutChapters || it.hasChapters() }
+            .map { it.toSManga(imgUrl) }
+            .toList()
         val hasNextPage = pagination.currentPage < totalPages
         return MangasPage(manga, hasNextPage)
     }
@@ -243,10 +249,18 @@ class ZTruyen : HttpSource(), ConfigurableSource {
                 true
             }
         }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_HIDE_MANGA_WITHOUT_CHAPTERS
+            title = "Ẩn truyện chưa có chapter"
+            summary = "Ẩn các truyện không có chapter"
+            setDefaultValue(true)
+        }.also(screen::addPreference)
     }
 
     companion object {
         private const val PREF_BASE_URL_KEY = "pref_base_url"
         private const val PREF_BASE_URL_DEFAULT = "https://ztruyen.io.vn"
+        private const val PREF_HIDE_MANGA_WITHOUT_CHAPTERS = "pref_hide_manga_without_chapters"
     }
 }

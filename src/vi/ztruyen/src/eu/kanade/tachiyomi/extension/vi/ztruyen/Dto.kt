@@ -39,7 +39,10 @@ class EntriesData(
     private val slug: String,
     @SerialName("thumb_url") private val thumbUrl: String?,
     private val category: List<Category> = emptyList(),
+    @SerialName("chaptersLatest") private val chaptersLatest: List<LatestChapter>? = null,
 ) {
+    fun hasChapters(): Boolean = !chaptersLatest.isNullOrEmpty()
+
     fun toSManga(imgUrl: String): SManga = SManga.create().apply {
         url = slug
         title = name
@@ -47,6 +50,11 @@ class EntriesData(
         genre = category.joinToString { it.name }
     }
 }
+
+@Serializable
+class LatestChapter(
+    @SerialName("chapter_name") val chapterName: String,
+)
 
 @Serializable
 class Category(
